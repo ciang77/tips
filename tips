@@ -1,0 +1,11 @@
+1、	堡垒机访问及代理配置： 使用堡垒机时，建议先关闭 Clash Verge 等可能影响网络路由的代理软件，避免因代理冲突导致堡垒机无法正常登录。随后，根据实际网络访问需求，在 Proxifier 等代理工具中添加需要访问的目标域名或 IP，并配置相应的代理规则，确保请求通过正确的网络通道访问。
+
+2、	堡垒机与跳板机均用于访问受限的内网资源。其中，跳板机主要提供网络连接中转能力，堡垒机则在中转访问的基础上，提供身份认证、权限控制和操作审计等安全管理功能。实际使用时，可结合 OpenVPN 建立内网连接，并根据网络环境配置 Clash Verge、Proxifier 等工具的代理或直连规则，避免代理冲突影响堡垒机访问。
+
+3、	使用 Flyway 脚本时，只要改动涉及 ClickHouse 的同步表，就必须处理它的整条 Kafka 摄取链路： 先给 ClickHouse 业务主表 ALTER TABLE ADD COLUMN 加字段，再把该表的 Kafka engine 表、materialized view、_all 视图 drop 掉，并按包含新字段的列清单重建。 因为这三类对象的列清单在创建时就固化了，且 materialized view 不支持 ALTER 加列，不重建的话新字段不会生效。 MySQL 不需要这套操作：它的表是普通 InnoDB 表，ALTER TABLE 直接生效，表上不存在这种「schema 固化的下游对象」，所以只需要用存储过程 + information_schema 判断列不存在时 ADD COLUMN 即可。
+
+4、	删除 Java 源码后如果没有 clean，maven-compiler-plugin 的增量编译不会删除 target/classes 里对应的旧 .class；而 maven-jar-plugin 是按目录打包 target/classes 的，不认识源码，于是旧 .class（以及残留的资源文件）会被一起打进 JAR。不带 clean 直接 mvn deploy，就会把这种含已删除类的错误产物发布到 Nexus，部署后由 Spring 组件扫描或类签名不匹配引发 NoClassDefFoundError/NoSuchMethodError/Bean 冲突，最终导致 Pod 启动失败。
+
+5、生产环境 SQL 执行频率异常，SET autocommit = ? 高达 480 次/秒（约 4153 万次/天），COMMIT 达 239 次/秒（2067 万次/天）。
+原因：@Transactional 标注在类级别，导致大量只读方法也开启事务，每次产生 2 条 SET autocommit，部分表除主键外无索引，每次都走全表扫描；高频调用的方法无缓存，反复执行多表join
+解决方案：按读写分离事务边界，下沉事务注解；引入缓存；补充索引
